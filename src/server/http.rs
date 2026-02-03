@@ -348,14 +348,12 @@ async fn compact_session(
             entry.last_accessed = Instant::now();
 
             match entry.agent.compact_session().await {
-                Ok((before, after)) => {
-                    Json(json!({
-                        "session_id": session_id,
-                        "token_count_before": before,
-                        "token_count_after": after,
-                    }))
-                    .into_response()
-                }
+                Ok((before, after)) => Json(json!({
+                    "session_id": session_id,
+                    "token_count_before": before,
+                    "token_count_after": after,
+                }))
+                .into_response(),
                 Err(e) => {
                     AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
                 }
@@ -400,13 +398,11 @@ async fn set_session_model(
             entry.last_accessed = Instant::now();
 
             match entry.agent.set_model(&request.model) {
-                Ok(()) => {
-                    Json(json!({
-                        "session_id": session_id,
-                        "model": request.model,
-                    }))
-                    .into_response()
-                }
+                Ok(()) => Json(json!({
+                    "session_id": session_id,
+                    "model": request.model,
+                }))
+                .into_response(),
                 Err(e) => AppError(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
             }
         }
@@ -660,9 +656,11 @@ async fn memory_reindex(
     match tokio::task::spawn_blocking(move || memory_reindex_inner(&config, force)).await {
         Ok(Ok(response)) => Json(response).into_response(),
         Ok(Err(e)) => AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        Err(e) => {
-            AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("Task error: {}", e)).into_response()
-        }
+        Err(e) => AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Task error: {}", e),
+        )
+        .into_response(),
     }
 }
 

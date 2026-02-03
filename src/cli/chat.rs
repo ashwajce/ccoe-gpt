@@ -538,7 +538,9 @@ async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> Comma
 
         "/models" => {
             println!("\nAvailable model prefixes:");
-            println!("  claude-cli/*    - Use Claude CLI (e.g., claude-cli/opus, claude-cli/sonnet)");
+            println!(
+                "  claude-cli/*    - Use Claude CLI (e.g., claude-cli/opus, claude-cli/sonnet)"
+            );
             println!("  gpt-*           - OpenAI (requires API key)");
             println!("  claude-*        - Anthropic API (requires API key)");
             println!("  ollama/*        - Ollama local (e.g., ollama/llama3)");

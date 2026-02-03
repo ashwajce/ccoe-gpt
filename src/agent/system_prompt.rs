@@ -10,6 +10,7 @@ pub const SILENT_REPLY_TOKEN: &str = "NO_REPLY";
 pub const HEARTBEAT_OK_TOKEN: &str = "HEARTBEAT_OK";
 
 /// Build the full system prompt for the agent
+#[allow(clippy::vec_init_then_push)] // clearer with explicit pushes for multi-section content
 pub fn build_system_prompt(params: SystemPromptParams) -> String {
     let mut lines = Vec::new();
 
@@ -108,7 +109,7 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
     lines.push(String::new());
 
     // Memory recall guidance
-    if params.tool_names.iter().any(|t| *t == "memory_search") {
+    if params.tool_names.contains(&"memory_search") {
         lines.push("## Memory Recall".to_string());
         lines.push(
             "Before answering questions about prior work, decisions, dates, people, preferences, \

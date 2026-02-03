@@ -98,6 +98,7 @@ fn extract_description(content: &str) -> String {
 }
 
 /// Build skills prompt section for the system prompt
+#[allow(clippy::vec_init_then_push)] // clearer with explicit pushes for mixed static/dynamic content
 pub fn build_skills_prompt(skills: &[Skill]) -> String {
     if skills.is_empty() {
         return String::new();

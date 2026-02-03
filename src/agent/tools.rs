@@ -331,12 +331,10 @@ impl Tool for EditFileTool {
         let (new_content, count) = if replace_all {
             let count = content.matches(old_string).count();
             (content.replace(old_string, new_string), count)
+        } else if content.contains(old_string) {
+            (content.replacen(old_string, new_string, 1), 1)
         } else {
-            if content.contains(old_string) {
-                (content.replacen(old_string, new_string, 1), 1)
-            } else {
-                return Err(anyhow::anyhow!("old_string not found in file"));
-            }
+            return Err(anyhow::anyhow!("old_string not found in file"));
         };
 
         fs::write(&path, &new_content)?;

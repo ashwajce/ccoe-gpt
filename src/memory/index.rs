@@ -286,6 +286,7 @@ impl MemoryIndex {
     }
 
     /// Insert into FTS table
+    #[allow(clippy::too_many_arguments)]
     fn insert_fts(
         conn: &Connection,
         id: &str,
@@ -972,7 +973,7 @@ fn chunk_text(text: &str, target_tokens: usize, overlap_tokens: usize) -> Vec<Ch
 
             // Prepare for next chunk
             if overlap_start < chunk_lines.len() {
-                start_line = start_line + overlap_start;
+                start_line += overlap_start;
                 chunk_lines = chunk_lines[overlap_start..].to_vec();
                 current_chars = chunk_lines.iter().map(|l| l.len() + 1).sum();
             } else {

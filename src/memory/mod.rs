@@ -442,7 +442,7 @@ impl MemoryManager {
             .filter(|e| e.path().extension().map(|e| e == "md").unwrap_or(false))
             .collect();
 
-        files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        files.sort_by_key(|f| std::cmp::Reverse(f.file_name()));
 
         for entry in files.into_iter().take(count) {
             let path = entry.path();

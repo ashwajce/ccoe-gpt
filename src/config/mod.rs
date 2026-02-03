@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub agent: AgentConfig,
@@ -60,7 +60,7 @@ pub struct ToolsConfig {
     pub web_fetch_max_bytes: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProvidersConfig {
     #[serde(default)]
     pub openai: Option<OpenAIConfig>,
@@ -256,20 +256,6 @@ fn default_log_file() -> String {
     "~/.localgpt/logs/agent.log".to_string()
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            agent: AgentConfig::default(),
-            providers: ProvidersConfig::default(),
-            heartbeat: HeartbeatConfig::default(),
-            memory: MemoryConfig::default(),
-            server: ServerConfig::default(),
-            logging: LoggingConfig::default(),
-            tools: ToolsConfig::default(),
-        }
-    }
-}
-
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -286,17 +272,6 @@ impl Default for ToolsConfig {
         Self {
             bash_timeout_ms: default_bash_timeout(),
             web_fetch_max_bytes: default_web_fetch_max_bytes(),
-        }
-    }
-}
-
-impl Default for ProvidersConfig {
-    fn default() -> Self {
-        Self {
-            openai: None,
-            anthropic: None,
-            ollama: None,
-            claude_cli: None,
         }
     }
 }
@@ -441,11 +416,9 @@ impl Config {
 }
 
 fn expand_env(s: &str) -> String {
-    if s.starts_with("${") && s.ends_with('}') {
-        let var_name = &s[2..s.len() - 1];
+    if let Some(var_name) = s.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
         std::env::var(var_name).unwrap_or_else(|_| s.to_string())
-    } else if s.starts_with('$') {
-        let var_name = &s[1..];
+    } else if let Some(var_name) = s.strip_prefix('$') {
         std::env::var(var_name).unwrap_or_else(|_| s.to_string())
     } else {
         s.to_string()
