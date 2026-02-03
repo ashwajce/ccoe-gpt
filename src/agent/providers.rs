@@ -226,6 +226,7 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
                 &anthropic_config.api_key,
                 &anthropic_config.base_url,
                 &full_model,
+                config.agent.max_tokens,
             )?))
         }
 
@@ -477,15 +478,17 @@ pub struct AnthropicProvider {
     api_key: String,
     base_url: String,
     model: String,
+    max_tokens: usize,
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str, base_url: &str, model: &str) -> Result<Self> {
+    pub fn new(api_key: &str, base_url: &str, model: &str, max_tokens: usize) -> Result<Self> {
         Ok(Self {
             client: Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.to_string(),
             model: model.to_string(),
+            max_tokens,
         })
     }
 
@@ -568,7 +571,7 @@ impl LLMProvider for AnthropicProvider {
 
         let mut body = json!({
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": self.max_tokens,
             "messages": formatted_messages
         });
 
@@ -676,7 +679,7 @@ impl LLMProvider for AnthropicProvider {
 
         let mut body = json!({
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": self.max_tokens,
             "messages": formatted_messages,
             "stream": true
         });

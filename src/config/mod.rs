@@ -28,6 +28,9 @@ pub struct Config {
 
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    #[serde(default)]
+    pub tools: ToolsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +43,21 @@ pub struct AgentConfig {
 
     #[serde(default = "default_reserve_tokens")]
     pub reserve_tokens: usize,
+
+    /// Maximum tokens for LLM response
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsConfig {
+    /// Bash command timeout in milliseconds
+    #[serde(default = "default_bash_timeout")]
+    pub bash_timeout_ms: u64,
+
+    /// Maximum bytes to return from web_fetch
+    #[serde(default = "default_web_fetch_max_bytes")]
+    pub web_fetch_max_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +189,15 @@ fn default_context_window() -> usize {
 fn default_reserve_tokens() -> usize {
     8000
 }
+fn default_max_tokens() -> usize {
+    4096
+}
+fn default_bash_timeout() -> u64 {
+    30000 // 30 seconds
+}
+fn default_web_fetch_max_bytes() -> usize {
+    10000
+}
 fn default_openai_base_url() -> String {
     "https://api.openai.com/v1".to_string()
 }
@@ -238,6 +265,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             server: ServerConfig::default(),
             logging: LoggingConfig::default(),
+            tools: ToolsConfig::default(),
         }
     }
 }
@@ -248,6 +276,16 @@ impl Default for AgentConfig {
             default_model: default_model(),
             context_window: default_context_window(),
             reserve_tokens: default_reserve_tokens(),
+            max_tokens: default_max_tokens(),
+        }
+    }
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            bash_timeout_ms: default_bash_timeout(),
+            web_fetch_max_bytes: default_web_fetch_max_bytes(),
         }
     }
 }

@@ -504,7 +504,8 @@ enum WsIncoming {
     /// Start or resume a session
     #[serde(rename = "session")]
     Session { session_id: Option<String> },
-    /// Chat message
+    /// Chat message (uses tool loop, returns complete response)
+    /// For streaming, use the SSE endpoint at /api/chat/stream
     #[serde(rename = "chat")]
     Chat { message: String },
     /// Ping for keepalive

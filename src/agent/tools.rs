@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use tracing::debug;
 
 use super::providers::ToolSchema;
@@ -26,21 +25,23 @@ pub fn create_default_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>> {
     let workspace = config.workspace_path();
 
     Ok(vec![
-        Box::new(BashTool::new()),
+        Box::new(BashTool::new(config.tools.bash_timeout_ms)),
         Box::new(ReadFileTool::new()),
         Box::new(WriteFileTool::new()),
         Box::new(EditFileTool::new()),
         Box::new(MemorySearchTool::new(workspace)),
-        Box::new(WebFetchTool::new()),
+        Box::new(WebFetchTool::new(config.tools.web_fetch_max_bytes)),
     ])
 }
 
 // Bash Tool
-pub struct BashTool;
+pub struct BashTool {
+    default_timeout_ms: u64,
+}
 
 impl BashTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(default_timeout_ms: u64) -> Self {
+        Self { default_timeout_ms }
     }
 }
 
@@ -63,7 +64,7 @@ impl Tool for BashTool {
                     },
                     "timeout_ms": {
                         "type": "integer",
-                        "description": "Optional timeout in milliseconds (default: 30000)"
+                        "description": format!("Optional timeout in milliseconds (default: {})", self.default_timeout_ms)
                     }
                 },
                 "required": ["command"]
@@ -77,9 +78,26 @@ impl Tool for BashTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing command"))?;
 
-        debug!("Executing bash command: {}", command);
+        let timeout_ms = args["timeout_ms"]
+            .as_u64()
+            .unwrap_or(self.default_timeout_ms);
 
-        let output = Command::new("bash").arg("-c").arg(command).output()?;
+        debug!(
+            "Executing bash command (timeout: {}ms): {}",
+            timeout_ms, command
+        );
+
+        // Run command with timeout
+        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+        let output = tokio::time::timeout(
+            timeout_duration,
+            tokio::process::Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .output(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Command timed out after {}ms", timeout_ms))??;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -435,12 +453,14 @@ impl Tool for MemorySearchTool {
 // Web Fetch Tool
 pub struct WebFetchTool {
     client: reqwest::Client,
+    max_bytes: usize,
 }
 
 impl WebFetchTool {
-    pub fn new() -> Self {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
+            max_bytes,
         }
     }
 }
@@ -487,11 +507,10 @@ impl Tool for WebFetchTool {
         let body = response.text().await?;
 
         // Truncate if too long
-        let max_len = 10000;
-        let truncated = if body.len() > max_len {
+        let truncated = if body.len() > self.max_bytes {
             format!(
                 "{}...\n\n[Truncated, {} bytes total]",
-                &body[..max_len],
+                &body[..self.max_bytes],
                 body.len()
             )
         } else {
