@@ -1,11 +1,12 @@
 //! Embedding providers for semantic search
 //!
-//! Supports OpenAI embeddings API with optional local fallback.
+//! Supports OpenAI embeddings API and optional local embeddings via fastembed.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::debug;
 
 /// Embedding provider trait
@@ -136,7 +137,7 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
 }
 
 /// Normalize embedding to unit vector
-fn normalize_embedding(mut vec: Vec<f32>) -> Vec<f32> {
+pub fn normalize_embedding(mut vec: Vec<f32>) -> Vec<f32> {
     let magnitude: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
     if magnitude > 1e-10 {
         for x in &mut vec {
@@ -144,6 +145,104 @@ fn normalize_embedding(mut vec: Vec<f32>) -> Vec<f32> {
         }
     }
     vec
+}
+
+/// Hash text for embedding cache lookup
+pub fn hash_text(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+// ============================================================================
+// Local Embedding Provider (fastembed) - Default provider, no API key needed
+// ============================================================================
+
+use std::sync::{Arc, Mutex as StdMutex};
+
+pub struct FastEmbedProvider {
+    model: Arc<StdMutex<fastembed::TextEmbedding>>,
+    model_name: String,
+    dimensions: usize,
+}
+
+impl FastEmbedProvider {
+    pub fn new(model_name: Option<&str>) -> Result<Self> {
+        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+        // Default to all-MiniLM-L6-v2 (384 dims, fast, good quality)
+        let (model_enum, name, dims) = match model_name {
+            Some("all-MiniLM-L6-v2") | None => {
+                (EmbeddingModel::AllMiniLML6V2, "all-MiniLM-L6-v2", 384)
+            }
+            Some("bge-small-en-v1.5") => (EmbeddingModel::BGESmallENV15, "bge-small-en-v1.5", 384),
+            Some("bge-base-en-v1.5") => (EmbeddingModel::BGEBaseENV15, "bge-base-en-v1.5", 768),
+            Some(other) => {
+                anyhow::bail!("Unknown local model: {}. Supported: all-MiniLM-L6-v2, bge-small-en-v1.5, bge-base-en-v1.5", other);
+            }
+        };
+
+        debug!("Loading local embedding model: {}", name);
+        let model = TextEmbedding::try_new(InitOptions::new(model_enum))?;
+
+        Ok(Self {
+            model: Arc::new(StdMutex::new(model)),
+            model_name: name.to_string(),
+            dimensions: dims,
+        })
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for FastEmbedProvider {
+    fn id(&self) -> &str {
+        "local"
+    }
+
+    fn model(&self) -> &str {
+        &self.model_name
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let results = self.embed_batch(&[text.to_string()]).await?;
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No embedding returned"))
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "Embedding {} texts locally with {}",
+            texts.len(),
+            self.model_name
+        );
+
+        // fastembed is synchronous, run in blocking task
+        let texts = texts.to_vec();
+        let model = Arc::clone(&self.model);
+
+        let embeddings: Vec<Vec<f32>> = tokio::task::spawn_blocking(move || {
+            let mut model_guard = model
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            model_guard
+                .embed(texts, None)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await??;
+
+        // Normalize all embeddings
+        Ok(embeddings.into_iter().map(normalize_embedding).collect())
+    }
 }
 
 /// Compute cosine similarity between two normalized vectors

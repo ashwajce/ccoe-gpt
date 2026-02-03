@@ -86,6 +86,10 @@ impl Agent {
         self.memory.chunk_count().unwrap_or(0)
     }
 
+    pub fn has_embeddings(&self) -> bool {
+        self.memory.has_embeddings()
+    }
+
     pub async fn new_session(&mut self) -> Result<()> {
         self.session = Session::new();
 
@@ -96,12 +100,10 @@ impl Agent {
 
         // Build system prompt with identity, safety, workspace info
         let tool_names: Vec<&str> = self.tools.iter().map(|t| t.name()).collect();
-        let system_prompt_params = system_prompt::SystemPromptParams::new(
-            self.memory.workspace(),
-            &self.config.model,
-        )
-        .with_tools(tool_names)
-        .with_skills_prompt(skills_prompt);
+        let system_prompt_params =
+            system_prompt::SystemPromptParams::new(self.memory.workspace(), &self.config.model)
+                .with_tools(tool_names)
+                .with_skills_prompt(skills_prompt);
         let system_prompt = system_prompt::build_system_prompt(system_prompt_params);
 
         // Load memory context (SOUL.md, MEMORY.md, daily logs, HEARTBEAT.md)
@@ -111,7 +113,10 @@ impl Agent {
         let full_context = if memory_context.is_empty() {
             system_prompt
         } else {
-            format!("{}\n\n---\n\n# Workspace Context\n\n{}", system_prompt, memory_context)
+            format!(
+                "{}\n\n---\n\n# Workspace Context\n\n{}",
+                system_prompt, memory_context
+            )
         };
 
         self.session.set_system_context(full_context);
@@ -384,7 +389,9 @@ impl Agent {
             "# Session: {} {}\n\n\
              - **Session ID**: {}\n\n\
              ## Conversation\n\n",
-            date_str, time_str, self.session.id()
+            date_str,
+            time_str,
+            self.session.id()
         );
 
         for msg in &messages {
@@ -420,9 +427,13 @@ impl Agent {
         self.memory.search(query, 10)
     }
 
-    pub fn reindex_memory(&self) -> Result<(usize, usize)> {
+    pub async fn reindex_memory(&self) -> Result<(usize, usize, usize)> {
         let stats = self.memory.reindex(true)?;
-        Ok((stats.files_processed, stats.chunks_indexed))
+
+        // Generate embeddings for new chunks (if embedding provider is configured)
+        let (_, embedded) = self.memory.generate_embeddings(50).await?;
+
+        Ok((stats.files_processed, stats.chunks_indexed, embedded))
     }
 
     pub async fn save_session(&self) -> Result<PathBuf> {
@@ -458,7 +469,9 @@ impl Agent {
         let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
 
         // Get stream from provider with tools
-        self.provider.chat_stream(&messages, Some(&tool_schemas)).await
+        self.provider
+            .chat_stream(&messages, Some(&tool_schemas))
+            .await
     }
 
     /// Complete a streaming chat by adding the assistant response to the session

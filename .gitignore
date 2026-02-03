@@ -22,6 +22,6 @@ target
 .DS_Store
 
 # User data files (may be created during testing)
-MEMORY.md
-HEARTBEAT.md
-memory/
+.fastembed_cache/
+.*
+!.gitignore

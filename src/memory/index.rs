@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::embeddings::{cosine_similarity, deserialize_embedding, serialize_embedding};
@@ -16,6 +16,8 @@ pub struct MemoryIndex {
     conn: Arc<Mutex<Connection>>,
     workspace: PathBuf,
     db_path: PathBuf,
+    /// Whether sqlite-vec extension is loaded for fast vector search
+    has_vec_extension: bool,
 }
 
 #[derive(Debug)]
@@ -101,11 +103,67 @@ impl MemoryIndex {
         Self::ensure_column(&conn, "files", "source", "TEXT NOT NULL DEFAULT 'memory'")?;
         Self::ensure_column(&conn, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'")?;
 
+        // Try to load sqlite-vec extension for fast vector search
+        let has_vec_extension = Self::try_load_sqlite_vec(&conn);
+        if has_vec_extension {
+            debug!("sqlite-vec extension loaded successfully");
+            Self::ensure_vec_table(&conn)?;
+        } else {
+            debug!("sqlite-vec extension not available, using in-memory vector search");
+        }
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             workspace: workspace.to_path_buf(),
             db_path: db_path.to_path_buf(),
+            has_vec_extension,
         })
+    }
+
+    /// Try to load sqlite-vec extension
+    #[allow(unsafe_code)]
+    fn try_load_sqlite_vec(conn: &Connection) -> bool {
+        // sqlite-vec provides the extension as a loadable module
+        // Try to load it - this requires the extension to be installed on the system
+
+        // SAFETY: load_extension is unsafe because it loads arbitrary native code
+        // We only load from known, trusted paths (sqlite-vec)
+        if unsafe { conn.load_extension_enable() }.is_err() {
+            return false;
+        }
+
+        // Try loading from common locations
+        let ext_paths = [
+            "vec0", // If in LD_LIBRARY_PATH
+            "./vec0",
+            "/usr/local/lib/vec0",
+            "/usr/lib/vec0",
+        ];
+
+        for path in ext_paths {
+            // SAFETY: Loading sqlite-vec extension from trusted path
+            if unsafe { conn.load_extension(path, None) }.is_ok() {
+                let _ = conn.load_extension_disable();
+                return true;
+            }
+        }
+
+        let _ = conn.load_extension_disable();
+        false
+    }
+
+    /// Create virtual table for vector search (requires sqlite-vec)
+    fn ensure_vec_table(conn: &Connection) -> Result<()> {
+        // Create chunks_vec virtual table if sqlite-vec is available
+        let result = conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(id TEXT PRIMARY KEY, embedding float[1536])",
+            [],
+        );
+        match result {
+            Ok(_) => debug!("chunks_vec table created/verified"),
+            Err(e) => debug!("chunks_vec table creation skipped: {}", e),
+        }
+        Ok(())
     }
 
     /// Create a new memory index with database in workspace (legacy path)
@@ -181,7 +239,16 @@ impl MemoryIndex {
             )?;
 
             // Insert into FTS
-            Self::insert_fts(&conn, &chunk_id, &relative_path, "memory", "", chunk.line_start, chunk.line_end, &chunk.content)?;
+            Self::insert_fts(
+                &conn,
+                &chunk_id,
+                &relative_path,
+                "memory",
+                "",
+                chunk.line_start,
+                chunk.line_end,
+                &chunk.content,
+            )?;
         }
 
         Ok(true)
@@ -197,10 +264,7 @@ impl MemoryIndex {
             .collect();
 
         for chunk_id in chunk_ids {
-            let _ = conn.execute(
-                "DELETE FROM chunks_fts WHERE id = ?1",
-                params![&chunk_id],
-            );
+            let _ = conn.execute("DELETE FROM chunks_fts WHERE id = ?1", params![&chunk_id]);
         }
 
         // Delete chunks
@@ -324,9 +388,7 @@ impl MemoryIndex {
         }
 
         // Check column names
-        let has_file_path: bool = conn
-            .prepare("SELECT file_path FROM chunks LIMIT 0")
-            .is_ok();
+        let has_file_path: bool = conn.prepare("SELECT file_path FROM chunks LIMIT 0").is_ok();
         let has_content: bool = conn.prepare("SELECT content FROM chunks LIMIT 0").is_ok();
 
         // Old schema has file_path and content columns
@@ -435,9 +497,8 @@ impl MemoryIndex {
             }
         } else {
             // Old schema without embedding columns
-            let mut stmt = conn.prepare(
-                "SELECT file_path, line_start, line_end, content FROM chunks_old",
-            )?;
+            let mut stmt =
+                conn.prepare("SELECT file_path, line_start, line_end, content FROM chunks_old")?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -548,10 +609,81 @@ impl MemoryIndex {
             params![&embedding_json, model, now, chunk_id],
         )?;
 
+        // Also store in vec table if sqlite-vec is available
+        if self.has_vec_extension {
+            let embedding_blob = embedding_to_blob(embedding);
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO chunks_vec (id, embedding) VALUES (?1, ?2)",
+                params![chunk_id, &embedding_blob],
+            );
+        }
+
         Ok(())
     }
 
+    // ========================================================================
+    // Embedding Cache (OpenClaw-compatible)
+    // ========================================================================
+
+    /// Get cached embedding by content hash
+    pub fn get_cached_embedding(
+        &self,
+        provider: &str,
+        model: &str,
+        text_hash: &str,
+    ) -> Result<Option<Vec<f32>>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT embedding FROM embedding_cache WHERE provider = ?1 AND model = ?2 AND hash = ?3",
+                params![provider, model, text_hash],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok(result.map(|json| deserialize_embedding(&json)))
+    }
+
+    /// Store embedding in cache
+    pub fn cache_embedding(
+        &self,
+        provider: &str,
+        model: &str,
+        provider_key: &str,
+        text_hash: &str,
+        embedding: &[f32],
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+
+        let embedding_json = serialize_embedding(embedding);
+        let dims = embedding.len() as i32;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO embedding_cache (provider, model, provider_key, hash, embedding, dims, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![provider, model, provider_key, text_hash, &embedding_json, dims, now],
+        )?;
+
+        Ok(())
+    }
+
+    /// Check if sqlite-vec is available
+    pub fn has_vec_extension(&self) -> bool {
+        self.has_vec_extension
+    }
+
     /// Vector search using embeddings (OpenClaw-compatible columns)
+    /// Uses sqlite-vec if available for fast search, otherwise falls back to in-memory scan
     pub fn search_vector(
         &self,
         query_embedding: &[f32],
@@ -563,7 +695,66 @@ impl MemoryIndex {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
-        // Get all chunks with embeddings for this model
+        // Try sqlite-vec fast path if available
+        if self.has_vec_extension {
+            if let Ok(results) = self.search_vector_fast(&conn, query_embedding, model, limit) {
+                return Ok(results);
+            }
+            warn!("sqlite-vec search failed, falling back to in-memory scan");
+        }
+
+        // Fallback: in-memory scan (slower but always works)
+        self.search_vector_scan(&conn, query_embedding, model, limit)
+    }
+
+    /// Fast vector search using sqlite-vec extension
+    fn search_vector_fast(
+        &self,
+        conn: &Connection,
+        query_embedding: &[f32],
+        model: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryChunk>> {
+        let query_blob = embedding_to_blob(query_embedding);
+
+        // sqlite-vec uses vec_distance_cosine for cosine distance (1 - similarity)
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT c.path, c.start_line, c.end_line, c.text,
+                   1.0 - vec_distance_cosine(v.embedding, ?1) AS score
+            FROM chunks_vec v
+            JOIN chunks c ON c.id = v.id
+            WHERE c.model = ?2
+            ORDER BY score DESC
+            LIMIT ?3
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![&query_blob, model, limit as i64], |row| {
+            Ok(MemoryChunk {
+                file: row.get(0)?,
+                line_start: row.get(1)?,
+                line_end: row.get(2)?,
+                content: row.get(3)?,
+                score: row.get(4)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// In-memory vector scan (fallback when sqlite-vec not available)
+    fn search_vector_scan(
+        &self,
+        conn: &Connection,
+        query_embedding: &[f32],
+        model: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryChunk>> {
         let mut stmt = conn.prepare(
             "SELECT id, path, start_line, end_line, text, embedding
              FROM chunks
@@ -607,7 +798,11 @@ impl MemoryIndex {
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top results
-        Ok(scored.into_iter().take(limit).map(|(_, chunk)| chunk).collect())
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, chunk)| chunk)
+            .collect())
     }
 
     /// Hybrid search: combine FTS and vector results
@@ -639,7 +834,11 @@ impl MemoryIndex {
             .iter()
             .map(|r| r.score)
             .fold(0.0f64, |a, b| a.max(b));
-        let max_fts_score = if max_fts_score > 0.0 { max_fts_score } else { 1.0 };
+        let max_fts_score = if max_fts_score > 0.0 {
+            max_fts_score
+        } else {
+            1.0
+        };
 
         for result in fts_results {
             let key = format!("{}:{}:{}", result.file, result.line_start, result.line_end);
@@ -667,7 +866,11 @@ impl MemoryIndex {
         let mut results: Vec<_> = merged.into_values().collect();
         results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        Ok(results.into_iter().take(limit).map(|(_, chunk)| chunk).collect())
+        Ok(results
+            .into_iter()
+            .take(limit)
+            .map(|(_, chunk)| chunk)
+            .collect())
     }
 
     /// Count chunks with embeddings (OpenClaw-compatible: model column)
@@ -691,6 +894,15 @@ fn hash_content(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Convert f32 embedding to binary blob for sqlite-vec
+fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(embedding.len() * 4);
+    for &val in embedding {
+        blob.extend_from_slice(&val.to_le_bytes());
+    }
+    blob
 }
 
 fn escape_fts_query(query: &str) -> String {

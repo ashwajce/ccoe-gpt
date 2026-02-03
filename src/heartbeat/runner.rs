@@ -8,7 +8,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
-use crate::agent::{build_heartbeat_prompt, is_heartbeat_ok, Agent, AgentConfig, HEARTBEAT_OK_TOKEN};
+use crate::agent::{
+    build_heartbeat_prompt, is_heartbeat_ok, Agent, AgentConfig, HEARTBEAT_OK_TOKEN,
+};
 use crate::config::{parse_duration, parse_time, Config};
 use crate::memory::MemoryManager;
 

@@ -188,7 +188,7 @@ fn default_workspace() -> String {
     "~/.localgpt/workspace".to_string()
 }
 fn default_embedding_model() -> String {
-    "text-embedding-3-small".to_string()
+    "all-MiniLM-L6-v2".to_string() // Local model via fastembed (no API key needed)
 }
 fn default_chunk_size() -> usize {
     400

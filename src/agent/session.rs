@@ -313,10 +313,7 @@ pub fn list_sessions_for_agent(agent_id: &str) -> Result<Vec<SessionInfo>> {
             continue;
         }
 
-        let filename = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
         // Skip if not a valid UUID-like name
         if filename.len() < 32 {

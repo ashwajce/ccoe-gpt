@@ -123,7 +123,9 @@ pub fn build_skills_prompt(skills: &[Skill]) -> String {
     lines.push("</available_skills>".to_string());
     lines.push(String::new());
     lines.push("Rules:".to_string());
-    lines.push("- If exactly one skill clearly applies: read its SKILL.md, then follow it.".to_string());
+    lines.push(
+        "- If exactly one skill clearly applies: read its SKILL.md, then follow it.".to_string(),
+    );
     lines.push("- If multiple could apply: choose the most specific one.".to_string());
     lines.push("- If none clearly apply: do not read any SKILL.md.".to_string());
     lines.push(String::new());

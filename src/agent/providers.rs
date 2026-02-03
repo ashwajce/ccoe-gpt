@@ -65,7 +65,11 @@ pub enum StreamEvent {
     /// Tool call started
     ToolCallStart { name: String, id: String },
     /// Tool call completed
-    ToolCallEnd { name: String, id: String, output: String },
+    ToolCallEnd {
+        name: String,
+        id: String,
+        output: String,
+    },
     /// Stream completed
     Done,
 }
@@ -160,16 +164,14 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
 
     match provider.as_str() {
         "anthropic" => {
-            let anthropic_config = config
-                .providers
-                .anthropic
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!(
+            let anthropic_config = config.providers.anthropic.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
                     "Anthropic provider not configured.\n\
                     Set ANTHROPIC_API_KEY env var or add to ~/.localgpt/config.toml:\n\n\
                     [providers.anthropic]\n\
                     api_key = \"sk-ant-...\""
-                ))?;
+                )
+            })?;
 
             let full_model = normalize_model_id("anthropic", &model_id);
             Ok(Box::new(AnthropicProvider::new(
@@ -180,16 +182,14 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
         }
 
         "openai" => {
-            let openai_config = config
-                .providers
-                .openai
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!(
+            let openai_config = config.providers.openai.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
                     "OpenAI provider not configured.\n\
                     Set OPENAI_API_KEY env var or add to ~/.localgpt/config.toml:\n\n\
                     [providers.openai]\n\
                     api_key = \"sk-...\""
-                ))?;
+                )
+            })?;
 
             Ok(Box::new(OpenAIProvider::new(
                 &openai_config.api_key,
@@ -207,16 +207,14 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
         }
 
         "ollama" => {
-            let ollama_config = config
-                .providers
-                .ollama
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!(
+            let ollama_config = config.providers.ollama.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
                     "Ollama provider not configured.\n\
                     Add to ~/.localgpt/config.toml:\n\n\
                     [providers.ollama]\n\
                     endpoint = \"http://localhost:11434\""
-                ))?;
+                )
+            })?;
 
             Ok(Box::new(OllamaProvider::new(
                 &ollama_config.endpoint,
@@ -242,7 +240,8 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
                 - claude-cli/opus, claude-cli/sonnet\n  \
                 - ollama/llama3, ollama/mistral\n\n\
                 Or use aliases: opus, sonnet, haiku, gpt, gpt-mini",
-                provider, model
+                provider,
+                model
             )
         }
     }
@@ -975,7 +974,6 @@ impl ClaudeCliProvider {
             cli_session_id: StdMutex::new(existing_session),
         })
     }
-
 }
 
 /// Load CLI session ID from session store

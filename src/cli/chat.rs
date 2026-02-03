@@ -5,46 +5,98 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use serde_json::Value;
 use std::io::{self, Write};
+use std::sync::Arc;
 
-use localgpt::agent::{
-    list_sessions_for_agent, get_last_session_id_for_agent, Agent, AgentConfig,
-};
+use localgpt::agent::{get_last_session_id_for_agent, list_sessions_for_agent, Agent, AgentConfig};
 use localgpt::config::Config;
-use localgpt::memory::MemoryManager;
+use localgpt::memory::{FastEmbedProvider, MemoryManager};
+
+/// Extract a snippet from content, centered around the query match
+fn extract_snippet(content: &str, query: &str, max_len: usize) -> String {
+    // Normalize content: collapse whitespace and newlines
+    let normalized: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Try to find query (case-insensitive)
+    let lower_content = normalized.to_lowercase();
+    let lower_query = query.to_lowercase();
+
+    if let Some(pos) = lower_content.find(&lower_query) {
+        // Center the snippet around the match
+        let half_len = max_len / 2;
+        let start = pos.saturating_sub(half_len);
+        let end = (pos + query.len() + half_len).min(normalized.len());
+
+        // Adjust to word boundaries
+        let mut snippet_start = start;
+        let mut snippet_end = end;
+
+        // Find word boundary at start
+        if start > 0 {
+            if let Some(space_pos) = normalized[start..].find(' ') {
+                snippet_start = start + space_pos + 1;
+            }
+        }
+
+        // Find word boundary at end
+        if end < normalized.len() {
+            if let Some(space_pos) = normalized[..end].rfind(' ') {
+                snippet_end = space_pos;
+            }
+        }
+
+        let snippet = &normalized[snippet_start..snippet_end];
+        let prefix = if snippet_start > 0 { "..." } else { "" };
+        let suffix = if snippet_end < normalized.len() {
+            "..."
+        } else {
+            ""
+        };
+
+        format!("{}{}{}", prefix, snippet, suffix)
+    } else {
+        // No match found, show beginning of content
+        let truncated: String = normalized.chars().take(max_len).collect();
+        if normalized.len() > max_len {
+            // Find last word boundary
+            if let Some(space_pos) = truncated.rfind(' ') {
+                format!("{}...", &truncated[..space_pos])
+            } else {
+                format!("{}...", truncated)
+            }
+        } else {
+            truncated
+        }
+    }
+}
 
 /// Extract relevant detail from tool arguments for display
 fn extract_tool_detail(tool_name: &str, arguments: &str) -> Option<String> {
     let args: Value = serde_json::from_str(arguments).ok()?;
 
     match tool_name {
-        "edit_file" | "write_file" | "read_file" => {
-            args.get("path")
-                .or_else(|| args.get("file_path"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
+        "edit_file" | "write_file" | "read_file" => args
+            .get("path")
+            .or_else(|| args.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "bash" => {
-            args.get("command")
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    // Truncate long commands
-                    if s.len() > 60 {
-                        format!("{}...", &s[..57])
-                    } else {
-                        s.to_string()
-                    }
-                })
+            args.get("command").and_then(|v| v.as_str()).map(|s| {
+                // Truncate long commands
+                if s.len() > 60 {
+                    format!("{}...", &s[..57])
+                } else {
+                    s.to_string()
+                }
+            })
         }
-        "memory_search" => {
-            args.get("query")
-                .and_then(|v| v.as_str())
-                .map(|s| format!("\"{}\"", s))
-        }
-        "web_fetch" => {
-            args.get("url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
+        "memory_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("\"{}\"", s)),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -66,7 +118,17 @@ pub struct ChatArgs {
 
 pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
     let config = Config::load()?;
-    let memory = MemoryManager::new_with_agent(&config.memory, agent_id)?;
+    let mut memory = MemoryManager::new_with_agent(&config.memory, agent_id)?;
+
+    // Set up local embedding provider (default - no API key needed)
+    match FastEmbedProvider::new(None) {
+        Ok(provider) => {
+            memory = memory.with_embedding_provider(Arc::new(provider));
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to create local embedding provider: {}", e);
+        }
+    }
 
     let agent_config = AgentConfig {
         model: args.model.unwrap_or(config.agent.default_model.clone()),
@@ -105,12 +167,18 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
         agent.new_session().await?;
     }
 
+    let embedding_status = if agent.has_embeddings() {
+        " | Embeddings: enabled"
+    } else {
+        ""
+    };
     println!(
-        "LocalGPT v{} | Agent: {} | Model: {} | Memory: {} chunks indexed\n",
+        "LocalGPT v{} | Agent: {} | Model: {} | Memory: {} chunks{}\n",
         env!("CARGO_PKG_VERSION"),
         agent_id,
         agent.model(),
-        agent.memory_chunk_count()
+        agent.memory_chunk_count(),
+        embedding_status
     );
     println!("Type /help for commands, /quit to exit\n");
 
@@ -199,7 +267,10 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
                     }
                     stdout.flush()?;
 
-                    match agent.execute_streaming_tool_calls(&full_response, tool_calls).await {
+                    match agent
+                        .execute_streaming_tool_calls(&full_response, tool_calls)
+                        .await
+                    {
                         Ok(follow_up) => {
                             print!("{}", follow_up);
                             stdout.flush()?;
@@ -258,32 +329,30 @@ async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> Comma
             CommandResult::Continue
         }
 
-        "/sessions" => {
-            match list_sessions_for_agent(agent_id) {
-                Ok(sessions) => {
-                    if sessions.is_empty() {
-                        println!("\nNo saved sessions found.\n");
-                    } else {
-                        println!("\nAvailable sessions:");
-                        for (i, session) in sessions.iter().take(10).enumerate() {
-                            println!(
-                                "  {}. {} ({} messages, {})",
-                                i + 1,
-                                &session.id[..8],
-                                session.message_count,
-                                session.created_at.format("%Y-%m-%d %H:%M")
-                            );
-                        }
-                        if sessions.len() > 10 {
-                            println!("  ... and {} more", sessions.len() - 10);
-                        }
-                        println!("\nUse /resume <id> to resume a session.\n");
+        "/sessions" => match list_sessions_for_agent(agent_id) {
+            Ok(sessions) => {
+                if sessions.is_empty() {
+                    println!("\nNo saved sessions found.\n");
+                } else {
+                    println!("\nAvailable sessions:");
+                    for (i, session) in sessions.iter().take(10).enumerate() {
+                        println!(
+                            "  {}. {} ({} messages, {})",
+                            i + 1,
+                            &session.id[..8],
+                            session.message_count,
+                            session.created_at.format("%Y-%m-%d %H:%M")
+                        );
                     }
-                    CommandResult::Continue
+                    if sessions.len() > 10 {
+                        println!("  ... and {} more", sessions.len() - 10);
+                    }
+                    println!("\nUse /resume <id> to resume a session.\n");
                 }
-                Err(e) => CommandResult::Error(format!("Failed to list sessions: {}", e)),
+                CommandResult::Continue
             }
-        }
+            Err(e) => CommandResult::Error(format!("Failed to list sessions: {}", e)),
+        },
 
         "/resume" => {
             if parts.len() < 2 {
@@ -300,7 +369,10 @@ async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> Comma
                         .collect();
 
                     match matching.len() {
-                        0 => CommandResult::Error(format!("No session found matching '{}'", session_id)),
+                        0 => CommandResult::Error(format!(
+                            "No session found matching '{}'",
+                            session_id
+                        )),
                         1 => {
                             let full_id = matching[0].id.clone();
                             match futures::executor::block_on(agent.resume_session(&full_id)) {
@@ -369,16 +441,20 @@ async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> Comma
             match agent.search_memory(&query).await {
                 Ok(results) => {
                     if results.is_empty() {
-                        println!("\nNo results found for '{}'. Try /reindex to rebuild memory index.\n", query);
+                        println!(
+                            "\nNo results found for '{}'. Try /reindex to rebuild memory index.\n",
+                            query
+                        );
                     } else {
                         println!("\nMemory search results for '{}':", query);
                         for (i, result) in results.iter().enumerate() {
+                            let snippet = extract_snippet(&result.content, &query, 120);
                             println!(
                                 "{}. [{}:{}] {}",
                                 i + 1,
                                 result.file,
                                 result.line_start,
-                                result.content.chars().take(100).collect::<String>()
+                                snippet
                             );
                         }
                         println!();
@@ -389,9 +465,19 @@ async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> Comma
             }
         }
 
-        "/reindex" => match agent.reindex_memory() {
-            Ok((files, chunks)) => {
-                println!("\nMemory index rebuilt: {} files, {} chunks\n", files, chunks);
+        "/reindex" => match futures::executor::block_on(agent.reindex_memory()) {
+            Ok((files, chunks, embedded)) => {
+                if embedded > 0 {
+                    println!(
+                        "\nMemory index rebuilt: {} files, {} chunks, {} embeddings\n",
+                        files, chunks, embedded
+                    );
+                } else {
+                    println!(
+                        "\nMemory index rebuilt: {} files, {} chunks\n",
+                        files, chunks
+                    );
+                }
                 CommandResult::Continue
             }
             Err(e) => CommandResult::Error(format!("Failed to reindex: {}", e)),

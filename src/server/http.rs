@@ -334,7 +334,11 @@ enum WsOutgoing {
     ToolStart { name: String, id: String },
     /// Tool call completed
     #[serde(rename = "tool_end")]
-    ToolEnd { name: String, id: String, output: String },
+    ToolEnd {
+        name: String,
+        id: String,
+        output: String,
+    },
     /// Message complete
     #[serde(rename = "done")]
     Done,
@@ -377,9 +381,7 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>) {
                         match agent.chat(&message).await {
                             Ok(response) => {
                                 // Send response as content
-                                let content = WsOutgoing::Content {
-                                    delta: response,
-                                };
+                                let content = WsOutgoing::Content { delta: response };
                                 if let Ok(json) = serde_json::to_string(&content) {
                                     let _ = sender.send(WsMessage::Text(json.into())).await;
                                 }

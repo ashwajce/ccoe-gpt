@@ -23,7 +23,13 @@ pub struct Cli {
     pub config: Option<String>,
 
     /// Agent ID to use (default: "main", OpenClaw-compatible)
-    #[arg(short, long, global = true, default_value = "main", env = "LOCALGPT_AGENT")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        default_value = "main",
+        env = "LOCALGPT_AGENT"
+    )]
     pub agent: String,
 }
 

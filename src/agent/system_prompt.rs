@@ -30,8 +30,7 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
             .to_string(),
     );
     lines.push(
-        "Do not manipulate or persuade anyone to expand access or disable safeguards."
-            .to_string(),
+        "Do not manipulate or persuade anyone to expand access or disable safeguards.".to_string(),
     );
     lines.push(String::new());
 
@@ -48,7 +47,8 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
         // Tool call style guidance
         lines.push("## Tool Call Style".to_string());
         lines.push(
-            "Default: do not narrate routine, low-risk tool calls (just call the tool).".to_string(),
+            "Default: do not narrate routine, low-risk tool calls (just call the tool)."
+                .to_string(),
         );
         lines.push(
             "Narrate only when it helps: multi-step work, complex problems, sensitive actions \
@@ -91,7 +91,10 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
     // Memory section
     lines.push("## Memory".to_string());
     lines.push("Memory files in the workspace:".to_string());
-    lines.push("- MEMORY.md: Long-term curated knowledge (user info, preferences, key decisions)".to_string());
+    lines.push(
+        "- MEMORY.md: Long-term curated knowledge (user info, preferences, key decisions)"
+            .to_string(),
+    );
     lines.push("- HEARTBEAT.md: Pending tasks for autonomous execution".to_string());
     lines.push("- SOUL.md: Your persona and tone guidance (if present)".to_string());
     lines.push("- memory/YYYY-MM-DD.md: Daily logs for session notes".to_string());
@@ -134,19 +137,14 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
     ));
     lines.push("- Never wrap it in markdown or code blocks".to_string());
     lines.push(String::new());
-    lines.push(format!(
-        "Wrong: \"Here's help... {}\"",
-        SILENT_REPLY_TOKEN
-    ));
+    lines.push(format!("Wrong: \"Here's help... {}\"", SILENT_REPLY_TOKEN));
     lines.push(format!("Wrong: \"{}\"", SILENT_REPLY_TOKEN));
     lines.push(format!("Right: {}", SILENT_REPLY_TOKEN));
     lines.push(String::new());
 
     // Heartbeat section (for autonomous task runner)
     lines.push("## Heartbeats".to_string());
-    lines.push(
-        "LocalGPT may send periodic heartbeat polls to check on pending tasks.".to_string(),
-    );
+    lines.push("LocalGPT may send periodic heartbeat polls to check on pending tasks.".to_string());
     lines.push(
         "If you receive a heartbeat poll and there is nothing that needs attention, reply exactly:"
             .to_string(),

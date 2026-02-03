@@ -4,7 +4,7 @@ mod search;
 mod watcher;
 mod workspace;
 
-pub use embeddings::{EmbeddingProvider, OpenAIEmbeddingProvider};
+pub use embeddings::{hash_text, EmbeddingProvider, FastEmbedProvider, OpenAIEmbeddingProvider};
 pub use index::{MemoryIndex, ReindexStats};
 pub use search::MemoryChunk;
 pub use watcher::MemoryWatcher;
@@ -14,8 +14,10 @@ use anyhow::Result;
 use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
+use tokio::runtime::Handle;
+use tracing::{debug, info, warn};
 
 use crate::config::MemoryConfig;
 
@@ -24,6 +26,8 @@ pub struct MemoryManager {
     workspace: PathBuf,
     index: MemoryIndex,
     config: MemoryConfig,
+    /// Optional embedding provider for semantic search
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 #[derive(Debug)]
@@ -77,7 +81,19 @@ impl MemoryManager {
             workspace,
             index,
             config: config.clone(),
+            embedding_provider: None,
         })
+    }
+
+    /// Set embedding provider for semantic search (requires OpenAI API key)
+    pub fn with_embedding_provider(mut self, provider: Arc<dyn EmbeddingProvider>) -> Self {
+        self.embedding_provider = Some(provider);
+        self
+    }
+
+    /// Check if semantic search is available
+    pub fn has_embeddings(&self) -> bool {
+        self.embedding_provider.is_some()
     }
 
     pub fn workspace(&self) -> &PathBuf {
@@ -173,8 +189,43 @@ impl MemoryManager {
         Ok(content)
     }
 
-    /// Search memory using FTS
+    /// Search memory using hybrid search (FTS + semantic if available)
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<MemoryChunk>> {
+        // If we have an embedding provider, try hybrid search
+        if let Some(ref provider) = self.embedding_provider {
+            // Try to get query embedding (may fail if no API key, rate limited, etc.)
+            if let Ok(handle) = Handle::try_current() {
+                let provider = provider.clone();
+                let query_string = query.to_string();
+                let model = provider.model().to_string();
+
+                // Run embedding in blocking context
+                let embedding_result = std::thread::spawn(move || {
+                    handle.block_on(async { provider.embed(&query_string).await })
+                })
+                .join()
+                .map_err(|_| anyhow::anyhow!("Thread panicked"))?;
+
+                if let Ok(embedding) = embedding_result {
+                    debug!("Using hybrid search with {} dimensions", embedding.len());
+                    return self.index.search_hybrid(
+                        query,
+                        Some(&embedding),
+                        &model,
+                        limit,
+                        0.3, // FTS weight
+                        0.7, // Vector weight
+                    );
+                }
+            }
+        }
+
+        // Fallback to FTS-only search
+        self.index.search(query, limit)
+    }
+
+    /// Search memory using FTS only (faster, no API calls)
+    pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<MemoryChunk>> {
         self.index.search(query, limit)
     }
 
@@ -344,5 +395,128 @@ impl MemoryManager {
     /// Start file watcher for automatic reindexing
     pub fn start_watcher(&self) -> Result<MemoryWatcher> {
         MemoryWatcher::new(self.workspace.clone(), self.config.clone())
+    }
+
+    /// Generate embeddings for chunks that don't have them
+    /// Returns (chunks_processed, chunks_embedded)
+    /// Uses embedding cache to avoid regenerating identical content
+    pub async fn generate_embeddings(&self, batch_size: usize) -> Result<(usize, usize)> {
+        let provider = match &self.embedding_provider {
+            Some(p) => p,
+            None => {
+                debug!("No embedding provider configured, skipping embedding generation");
+                return Ok((0, 0));
+            }
+        };
+
+        let provider_id = provider.id().to_string();
+        let model = provider.model().to_string();
+        let mut total_processed = 0;
+        let mut total_embedded = 0;
+        let mut cache_hits = 0;
+
+        loop {
+            // Get chunks without embeddings
+            let chunks = self.index.chunks_without_embeddings(batch_size)?;
+            if chunks.is_empty() {
+                break;
+            }
+
+            total_processed += chunks.len();
+
+            // Separate chunks into cached and uncached
+            let mut to_embed: Vec<(String, String, String)> = Vec::new(); // (id, text, hash)
+            let mut from_cache: Vec<(String, Vec<f32>)> = Vec::new(); // (id, embedding)
+
+            for (chunk_id, text) in &chunks {
+                let text_hash = hash_text(text);
+
+                // Check cache first
+                if let Ok(Some(cached)) =
+                    self.index
+                        .get_cached_embedding(&provider_id, &model, &text_hash)
+                {
+                    from_cache.push((chunk_id.clone(), cached));
+                    cache_hits += 1;
+                } else {
+                    to_embed.push((chunk_id.clone(), text.clone(), text_hash));
+                }
+            }
+
+            // Store cached embeddings
+            for (chunk_id, embedding) in from_cache {
+                if let Err(e) = self.index.store_embedding(&chunk_id, &embedding, &model) {
+                    warn!(
+                        "Failed to store cached embedding for chunk {}: {}",
+                        chunk_id, e
+                    );
+                } else {
+                    total_embedded += 1;
+                }
+            }
+
+            // Generate new embeddings for uncached chunks
+            if !to_embed.is_empty() {
+                let texts: Vec<String> = to_embed.iter().map(|(_, text, _)| text.clone()).collect();
+
+                match provider.embed_batch(&texts).await {
+                    Ok(embeddings) => {
+                        for ((chunk_id, _text, text_hash), embedding) in
+                            to_embed.iter().zip(embeddings.iter())
+                        {
+                            // Store in chunk
+                            if let Err(e) = self.index.store_embedding(chunk_id, embedding, &model)
+                            {
+                                warn!("Failed to store embedding for chunk {}: {}", chunk_id, e);
+                            } else {
+                                total_embedded += 1;
+                            }
+
+                            // Store in cache for future reuse
+                            if let Err(e) = self.index.cache_embedding(
+                                &provider_id,
+                                &model,
+                                "", // provider_key (API key identifier, can be empty)
+                                text_hash,
+                                embedding,
+                            ) {
+                                debug!("Failed to cache embedding: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to generate embeddings: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            debug!(
+                "Generated embeddings: {}/{} chunks ({} from cache)",
+                total_embedded, total_processed, cache_hits
+            );
+
+            // Break if we processed fewer than batch_size (last batch)
+            if chunks.len() < batch_size {
+                break;
+            }
+        }
+
+        info!(
+            "Embedding generation complete: {} chunks, {} embedded, {} cache hits",
+            total_processed, total_embedded, cache_hits
+        );
+
+        Ok((total_processed, total_embedded))
+    }
+
+    /// Get count of chunks with embeddings
+    pub fn embedded_chunk_count(&self) -> Result<usize> {
+        let model = self
+            .embedding_provider
+            .as_ref()
+            .map(|p| p.model().to_string())
+            .unwrap_or_default();
+        self.index.embedded_chunk_count(&model)
     }
 }
