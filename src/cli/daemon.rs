@@ -77,7 +77,7 @@ pub fn daemonize_and_run(agent_id: &str) -> Result<()> {
         fs::remove_file(&pid_file)?;
     }
 
-    let log_file = get_log_file()?;
+    let log_file = get_log_file(config.logging.retention_days)?;
 
     // Print startup info before daemonizing
     println!(
@@ -96,7 +96,11 @@ pub fn daemonize_and_run(agent_id: &str) -> Result<()> {
     println!("Use 'localgpt daemon stop' to stop\n");
 
     // Fork BEFORE starting Tokio
-    let stdout = std::fs::File::create(&log_file)?;
+    // Use append mode to preserve previous logs within the same day
+    let stdout = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)?;
     let stderr = stdout.try_clone()?;
 
     let daemonize = Daemonize::new()
@@ -424,11 +428,41 @@ fn get_pid_file() -> Result<PathBuf> {
     Ok(state_dir.join("daemon.pid"))
 }
 
-fn get_log_file() -> Result<PathBuf> {
+fn get_log_file(retention_days: u32) -> Result<PathBuf> {
     let state_dir = localgpt::agent::get_state_dir()?;
     let logs_dir = state_dir.join("logs");
     fs::create_dir_all(&logs_dir)?;
-    Ok(logs_dir.join("daemon.log"))
+
+    // Prune old logs only if retention_days > 0
+    if retention_days > 0 {
+        prune_old_logs(&logs_dir, retention_days as i64);
+    }
+
+    // Use date-based log files (like OpenClaw)
+    let date = chrono::Local::now().format("%Y-%m-%d");
+    Ok(logs_dir.join(format!("localgpt-{}.log", date)))
+}
+
+/// Prune log files older than `keep_days` days
+fn prune_old_logs(logs_dir: &std::path::Path, keep_days: i64) {
+    let cutoff = chrono::Local::now() - chrono::Duration::days(keep_days);
+    let cutoff_date = cutoff.format("%Y-%m-%d").to_string();
+
+    if let Ok(entries) = fs::read_dir(logs_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+
+            // Match localgpt-YYYY-MM-DD.log pattern
+            if name_str.starts_with("localgpt-") && name_str.ends_with(".log") {
+                if let Some(date_part) = name_str.strip_prefix("localgpt-").and_then(|s| s.strip_suffix(".log")) {
+                    if date_part < cutoff_date.as_str() {
+                        let _ = fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn is_process_running(pid: &str) -> bool {

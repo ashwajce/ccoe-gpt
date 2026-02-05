@@ -207,6 +207,10 @@ pub struct LoggingConfig {
 
     #[serde(default = "default_log_file")]
     pub file: String,
+
+    /// Days to keep log files (0 = keep forever, no auto-deletion)
+    #[serde(default)]
+    pub retention_days: u32,
 }
 
 // Default value functions
@@ -361,6 +365,7 @@ impl Default for LoggingConfig {
         Self {
             level: default_log_level(),
             file: default_log_file(),
+            retention_days: 0, // 0 = keep forever
         }
     }
 }
