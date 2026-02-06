@@ -72,8 +72,8 @@ Download from:
 
 | Build | Binary Size | Notes |
 |-------|-------------|-------|
-| Default (ONNX) | ~7 MB | No C++ required |
-| With GGUF | ~25-30 MB | Includes llama.cpp |
+| Default (ONNX) | ~27 MB | No C++ required |
+| With GGUF | ~45-50 MB | Includes llama.cpp |
 
 ## Comparison with OpenClaw
 

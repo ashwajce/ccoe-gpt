@@ -158,7 +158,7 @@ impl SessionStore {
         Ok(Self { path, entries })
     }
 
-    /// Save session store to disk
+    /// Save session store to disk using atomic write (temp file + rename).
     pub fn save(&self) -> Result<()> {
         // Ensure directory exists
         if let Some(parent) = self.path.parent() {
@@ -166,7 +166,16 @@ impl SessionStore {
         }
 
         let content = serde_json::to_string_pretty(&self.entries)?;
-        fs::write(&self.path, content)?;
+
+        // Write to a unique temp file then atomically rename
+        let tmp_path = self.path.with_extension(format!(
+            "{}.{}.tmp",
+            std::process::id(),
+            uuid::Uuid::new_v4().as_simple()
+        ));
+
+        fs::write(&tmp_path, &content)?;
+        fs::rename(&tmp_path, &self.path)?;
 
         debug!("Saved session store to {:?}", self.path);
         Ok(())
@@ -189,6 +198,26 @@ impl SessionStore {
     where
         F: FnOnce(&mut SessionEntry),
     {
+        let entry = self.get_or_create(session_key, session_id);
+        f(entry);
+        entry.updated_at = chrono::Utc::now().timestamp_millis() as u64;
+        self.save()
+    }
+
+    /// Re-read the store from disk, apply a mutation, and save atomically.
+    ///
+    /// This prevents clobbering when multiple processes or tasks update
+    /// the same sessions.json concurrently (e.g., heartbeat dedup).
+    pub fn load_and_update<F>(&mut self, session_key: &str, session_id: &str, f: F) -> Result<()>
+    where
+        F: FnOnce(&mut SessionEntry),
+    {
+        // Re-read from disk to pick up changes from other processes
+        if self.path.exists() {
+            let content = fs::read_to_string(&self.path)?;
+            self.entries = serde_json::from_str(&content).unwrap_or_default();
+        }
+
         let entry = self.get_or_create(session_key, session_id);
         f(entry);
         entry.updated_at = chrono::Utc::now().timestamp_millis() as u64;
@@ -268,5 +297,67 @@ mod tests {
         assert!(entry.cli_session_ids.is_empty());
         assert!(entry.input_tokens.is_none());
         assert!(entry.compaction_count.is_none());
+    }
+
+    #[test]
+    fn test_atomic_save_no_tmp_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sessions.json");
+
+        let mut store = SessionStore {
+            path: path.clone(),
+            entries: HashMap::new(),
+        };
+
+        store.get_or_create("main", "test-session-1");
+        store.save().unwrap();
+
+        // Verify the file exists and is valid JSON
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: HashMap<String, SessionEntry> = serde_json::from_str(&content).unwrap();
+        assert!(parsed.contains_key("main"));
+
+        // Verify no .tmp files remain
+        let tmp_files: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "tmp")
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(
+            tmp_files.is_empty(),
+            "No .tmp files should remain after save, found: {:?}",
+            tmp_files
+        );
+    }
+
+    #[test]
+    fn test_atomic_save_produces_valid_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sessions.json");
+
+        let mut store = SessionStore {
+            path: path.clone(),
+            entries: HashMap::new(),
+        };
+
+        let entry = store.get_or_create("main", "session-abc");
+        entry.input_tokens = Some(1000);
+        entry.output_tokens = Some(500);
+
+        store.save().unwrap();
+
+        // Re-read and verify
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: HashMap<String, SessionEntry> = serde_json::from_str(&content).unwrap();
+        let main = parsed.get("main").unwrap();
+        assert_eq!(main.session_id, "session-abc");
+        assert_eq!(main.input_tokens, Some(1000));
+        assert_eq!(main.output_tokens, Some(500));
     }
 }

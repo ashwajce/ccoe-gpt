@@ -31,6 +31,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info};
 
 use crate::agent::{Agent, AgentConfig, StreamEvent};
+use crate::concurrency::{TurnGate, WorkspaceLock};
 use crate::config::Config;
 use crate::heartbeat::{get_last_heartbeat_event, HeartbeatStatus};
 use crate::memory::MemoryManager;
@@ -51,6 +52,7 @@ const HTTP_AGENT_ID: &str = "http";
 
 pub struct Server {
     config: Config,
+    turn_gate: TurnGate,
 }
 
 struct SessionEntry {
@@ -65,12 +67,26 @@ struct AppState {
     sessions: Mutex<HashMap<String, SessionEntry>>,
     /// Shared MemoryManager to avoid reinitializing embedding provider
     memory: MemoryManager,
+    /// In-process turn gate shared with heartbeat runner
+    turn_gate: TurnGate,
+    /// Cross-process workspace lock
+    workspace_lock: WorkspaceLock,
 }
 
 impl Server {
     pub fn new(config: &Config) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
+            turn_gate: TurnGate::new(),
+        })
+    }
+
+    /// Create a server with a shared TurnGate (for daemon mode where
+    /// heartbeat and HTTP share concurrency control).
+    pub fn new_with_gate(config: &Config, turn_gate: TurnGate) -> Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            turn_gate,
         })
     }
 
@@ -79,10 +95,14 @@ impl Server {
         let memory =
             MemoryManager::new_with_full_config(&self.config.memory, Some(&self.config), "main")?;
 
+        let workspace_lock = WorkspaceLock::new()?;
+
         let state = Arc::new(AppState {
             config: self.config.clone(),
             sessions: Mutex::new(HashMap::new()),
             memory,
+            turn_gate: self.turn_gate.clone(),
+            workspace_lock,
         });
 
         // Load persisted sessions on startup
@@ -634,6 +654,29 @@ async fn chat(State(state): State<Arc<AppState>>, Json(request): Json<ChatReques
         Err(e) => return e.into_response(),
     };
 
+    // Acquire in-process turn gate (waits for other turns to finish)
+    let _gate_permit = state.turn_gate.acquire().await;
+
+    // Acquire cross-process workspace lock (blocking, so use spawn_blocking)
+    let ws_lock_path = state.workspace_lock.clone();
+    let ws_guard = match tokio::task::spawn_blocking(move || ws_lock_path.acquire()).await {
+        Ok(Ok(guard)) => guard,
+        Ok(Err(e)) => {
+            return AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire workspace lock: {}", e),
+            )
+            .into_response()
+        }
+        Err(e) => {
+            return AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Lock task error: {}", e),
+            )
+            .into_response()
+        }
+    };
+
     // Get agent from session
     let mut sessions = state.sessions.lock().await;
     let entry = match sessions.get_mut(&session_id) {
@@ -653,7 +696,12 @@ async fn chat(State(state): State<Arc<AppState>>, Json(request): Json<ChatReques
         }
     }
 
-    match entry.agent.chat(&request.message).await {
+    let result = entry.agent.chat(&request.message).await;
+
+    // Release workspace lock explicitly before returning
+    drop(ws_guard);
+
+    match result {
         Ok(response) => {
             entry.dirty = true;
             Json(ChatResponse {
@@ -684,6 +732,23 @@ async fn chat_stream(
     let stream = async_stream::stream! {
         // Send session_id first
         yield Ok::<Event, Infallible>(Event::default().data(json!({"type": "session", "session_id": session_id}).to_string()));
+
+        // Acquire in-process turn gate
+        let _gate_permit = state_clone.turn_gate.acquire().await;
+
+        // Acquire cross-process workspace lock
+        let ws_lock = state_clone.workspace_lock.clone();
+        let _ws_guard = match tokio::task::spawn_blocking(move || ws_lock.acquire()).await {
+            Ok(Ok(guard)) => Some(guard),
+            Ok(Err(e)) => {
+                yield Ok(Event::default().data(json!({"error": format!("Workspace lock error: {}", e)}).to_string()));
+                return;
+            }
+            Err(e) => {
+                yield Ok(Event::default().data(json!({"error": format!("Lock task error: {}", e)}).to_string()));
+                return;
+            }
+        };
 
         let mut sessions = state_clone.sessions.lock().await;
         let entry = match sessions.get_mut(&session_id) {
@@ -1338,6 +1403,34 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>) {
                         };
 
                         debug!("WebSocket chat [{}]: {}", session_id, message);
+
+                        // Acquire in-process turn gate
+                        let _gate_permit = state.turn_gate.acquire().await;
+
+                        // Acquire cross-process workspace lock
+                        let ws_lock = state.workspace_lock.clone();
+                        let _ws_guard =
+                            match tokio::task::spawn_blocking(move || ws_lock.acquire()).await {
+                                Ok(Ok(guard)) => guard,
+                                Ok(Err(e)) => {
+                                    let error = WsOutgoing::Error {
+                                        message: format!("Workspace lock error: {}", e),
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&error) {
+                                        let _ = sender.send(WsMessage::Text(json.into())).await;
+                                    }
+                                    continue;
+                                }
+                                Err(e) => {
+                                    let error = WsOutgoing::Error {
+                                        message: format!("Lock task error: {}", e),
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&error) {
+                                        let _ = sender.send(WsMessage::Text(json.into())).await;
+                                    }
+                                    continue;
+                                }
+                            };
 
                         // Process chat
                         let mut sessions = state.sessions.lock().await;

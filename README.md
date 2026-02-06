@@ -9,7 +9,7 @@ A Local focused AI assistant with persistent memory and continuous operation cap
 - **Multiple LLM providers** - OpenAI, Anthropic, and Ollama support
 - **Heartbeat runner** - Autonomous task execution
 - **HTTP API** - REST endpoints for programmatic access
-- **Small footprint** - ~7MB binary, minimal dependencies
+- **Small footprint** - ~27MB binary, minimal dependencies
 
 ## Installation
 

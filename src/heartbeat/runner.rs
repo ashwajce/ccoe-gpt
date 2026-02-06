@@ -12,6 +12,7 @@ use super::events::{emit_heartbeat_event, now_ms, HeartbeatEvent, HeartbeatStatu
 use crate::agent::{
     build_heartbeat_prompt, is_heartbeat_ok, Agent, AgentConfig, SessionStore, HEARTBEAT_OK_TOKEN,
 };
+use crate::concurrency::{TurnGate, WorkspaceLock};
 use crate::config::{parse_duration, parse_time, Config};
 use crate::memory::MemoryManager;
 
@@ -23,6 +24,10 @@ pub struct HeartbeatRunner {
     agent_id: String,
     /// Cached MemoryManager to avoid reinitializing embedding provider on every heartbeat
     memory: MemoryManager,
+    /// In-process turn gate (shared with HTTP server when running in daemon)
+    turn_gate: Option<TurnGate>,
+    /// Cross-process workspace lock
+    workspace_lock: WorkspaceLock,
 }
 
 impl HeartbeatRunner {
@@ -33,6 +38,18 @@ impl HeartbeatRunner {
 
     /// Create a new HeartbeatRunner for a specific agent ID
     pub fn new_with_agent(config: &Config, agent_id: &str) -> Result<Self> {
+        Self::new_with_gate(config, agent_id, None)
+    }
+
+    /// Create a new HeartbeatRunner with an optional in-process TurnGate.
+    ///
+    /// When running inside the daemon alongside the HTTP server, pass a
+    /// shared `TurnGate` so heartbeat skips when an HTTP agent turn is active.
+    pub fn new_with_gate(
+        config: &Config,
+        agent_id: &str,
+        turn_gate: Option<TurnGate>,
+    ) -> Result<Self> {
         let interval = parse_duration(&config.heartbeat.interval)
             .map_err(|e| anyhow::anyhow!("Invalid heartbeat interval: {}", e))?;
 
@@ -54,6 +71,7 @@ impl HeartbeatRunner {
 
         // Create MemoryManager once and reuse it to avoid reinitializing embedding provider
         let memory = MemoryManager::new_with_full_config(&config.memory, Some(config), agent_id)?;
+        let workspace_lock = WorkspaceLock::new()?;
 
         Ok(Self {
             config: config.clone(),
@@ -62,6 +80,8 @@ impl HeartbeatRunner {
             workspace,
             agent_id: agent_id.to_string(),
             memory,
+            turn_gate,
+            workspace_lock,
         })
     }
 
@@ -168,6 +188,37 @@ impl HeartbeatRunner {
 
     /// Internal heartbeat execution (returns response and status)
     async fn run_once_internal(&self) -> Result<(String, HeartbeatStatus)> {
+        // Skip if an in-process agent turn is already in flight
+        if let Some(ref gate) = self.turn_gate {
+            if gate.is_busy() {
+                debug!("Skipping heartbeat: agent turn in flight (TurnGate busy)");
+                return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+            }
+        }
+
+        // Try to acquire the cross-process workspace lock (non-blocking)
+        let _ws_guard = match self.workspace_lock.try_acquire()? {
+            Some(guard) => guard,
+            None => {
+                debug!("Skipping heartbeat: workspace locked by another process");
+                return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+            }
+        };
+
+        // Try to acquire the in-process turn gate (non-blocking, race between
+        // the is_busy check above and now)
+        let _gate_permit = if let Some(ref gate) = self.turn_gate {
+            match gate.try_acquire() {
+                Some(permit) => Some(permit),
+                None => {
+                    debug!("Skipping heartbeat: agent turn started between check and acquire");
+                    return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+                }
+            }
+        } else {
+            None
+        };
+
         // Check if HEARTBEAT.md exists and has content
         let heartbeat_path = self.workspace.join("HEARTBEAT.md");
 
@@ -219,9 +270,9 @@ impl HeartbeatRunner {
                 }
             }
 
-            // Record the heartbeat
+            // Record the heartbeat (re-read from disk to avoid clobbering)
             let session_id = agent.session_status().id;
-            if let Err(e) = store.update(session_key, &session_id, |entry| {
+            if let Err(e) = store.load_and_update(session_key, &session_id, |entry| {
                 entry.record_heartbeat(&response);
             }) {
                 warn!("Failed to record heartbeat in session store: {}", e);

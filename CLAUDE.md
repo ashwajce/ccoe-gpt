@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Build
 cargo build              # Debug build
-cargo build --release    # Release build (~7MB binary)
+cargo build --release    # Release build (~27MB binary)
 
 # Run
 cargo run -- <subcommand>   # Run with arguments

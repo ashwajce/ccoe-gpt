@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use daemonize::Daemonize;
 
+use localgpt::concurrency::TurnGate;
 use localgpt::config::Config;
 use localgpt::heartbeat::HeartbeatRunner;
 use localgpt::memory::MemoryManager;
@@ -146,16 +147,24 @@ async fn run_daemon_server(config: Config, agent_id: &str) -> Result<()> {
 
 /// Run daemon services (server and/or heartbeat)
 async fn run_daemon_services(config: &Config, agent_id: &str) -> Result<()> {
+    // Create shared turn gate for heartbeat + HTTP concurrency control
+    let turn_gate = TurnGate::new();
+
     // Spawn heartbeat in background if enabled
     let heartbeat_handle = if config.heartbeat.enabled {
         let heartbeat_config = config.clone();
         let heartbeat_agent_id = agent_id.to_string();
+        let heartbeat_gate = turn_gate.clone();
         println!(
             "  Heartbeat: enabled (interval: {})",
             config.heartbeat.interval
         );
         Some(tokio::spawn(async move {
-            match HeartbeatRunner::new_with_agent(&heartbeat_config, &heartbeat_agent_id) {
+            match HeartbeatRunner::new_with_gate(
+                &heartbeat_config,
+                &heartbeat_agent_id,
+                Some(heartbeat_gate),
+            ) {
                 Ok(runner) => {
                     if let Err(e) = runner.run().await {
                         tracing::error!("Heartbeat runner error: {}", e);
@@ -176,7 +185,7 @@ async fn run_daemon_services(config: &Config, agent_id: &str) -> Result<()> {
             "  Server: http://{}:{}",
             config.server.bind, config.server.port
         );
-        let server = Server::new(config)?;
+        let server = Server::new_with_gate(config, turn_gate)?;
         server.run().await?;
     } else if heartbeat_handle.is_some() {
         // Server not enabled but heartbeat is - wait for Ctrl+C

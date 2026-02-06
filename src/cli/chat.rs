@@ -10,6 +10,7 @@ use localgpt::agent::{
     get_last_session_id_for_agent, get_skills_summary, list_sessions_for_agent, load_skills,
     parse_skill_command, search_sessions_for_agent, Agent, AgentConfig, ImageAttachment, Skill,
 };
+use localgpt::concurrency::WorkspaceLock;
 use localgpt::config::Config;
 use localgpt::memory::MemoryManager;
 
@@ -130,6 +131,7 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
     };
 
     let mut agent = Agent::new(agent_config, &config, memory).await?;
+    let workspace_lock = WorkspaceLock::new()?;
 
     // Determine session to use
     let session_id = if let Some(id) = args.session {
@@ -343,6 +345,7 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
                     // Skill invocation - send message to agent
                     print!("\nLocalGPT: ");
                     stdout.flush().ok();
+                    let _lock_guard = workspace_lock.acquire()?;
                     match agent.chat(&msg).await {
                         Ok(response) => {
                             println!("{}\n", response);
@@ -395,6 +398,7 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
         print!("\nLocalGPT: ");
         stdout.flush()?;
 
+        let _lock_guard = workspace_lock.acquire()?;
         match agent.chat_stream_with_images(&message, images).await {
             Ok(mut stream) => {
                 let mut full_response = String::new();

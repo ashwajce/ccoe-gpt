@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Args;
 
 use localgpt::agent::{Agent, AgentConfig};
+use localgpt::concurrency::WorkspaceLock;
 use localgpt::config::Config;
 use localgpt::memory::MemoryManager;
 
@@ -32,6 +33,8 @@ pub async fn run(args: AskArgs, agent_id: &str) -> Result<()> {
     let mut agent = Agent::new(agent_config, &config, memory).await?;
     agent.new_session().await?;
 
+    let workspace_lock = WorkspaceLock::new()?;
+    let _lock_guard = workspace_lock.acquire()?;
     let response = agent.chat(&args.question).await?;
 
     match args.format.as_str() {
