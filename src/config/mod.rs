@@ -160,7 +160,7 @@ pub struct MemoryConfig {
     pub embedding_model: String,
 
     /// Cache directory for local embedding models (optional)
-    /// Default: ~/.cache/localgpt/models
+    /// Default: ~/.cache/ccoegpt/models
     /// Can also be set via FASTEMBED_CACHE_DIR environment variable
     #[serde(default = "default_embedding_cache_dir")]
     pub embedding_cache_dir: String,
@@ -267,7 +267,7 @@ fn default_interval() -> String {
     "30m".to_string()
 }
 fn default_workspace() -> String {
-    "~/.localgpt/workspace".to_string()
+    "~/.ccoegpt/workspace".to_string()
 }
 fn default_embedding_provider() -> String {
     "local".to_string() // Local embeddings via fastembed (no API key needed)
@@ -276,7 +276,7 @@ fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string() // Local model via fastembed (no API key needed)
 }
 fn default_embedding_cache_dir() -> String {
-    "~/.cache/localgpt/models".to_string()
+    "~/.cache/ccoegpt/models".to_string()
 }
 fn default_chunk_size() -> usize {
     400
@@ -306,7 +306,7 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 fn default_log_file() -> String {
-    "~/.localgpt/logs/agent.log".to_string()
+    "~/.ccoegpt/logs/agent.log".to_string()
 }
 
 impl Default for AgentConfig {
@@ -439,7 +439,7 @@ impl Config {
         let base = directories::BaseDirs::new()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
 
-        Ok(base.home_dir().join(".localgpt").join("config.toml"))
+        Ok(base.home_dir().join(".ccoegpt").join("config.toml"))
     }
 
     fn expand_env_vars(&mut self) {
@@ -493,9 +493,9 @@ impl Config {
     ///
     /// Resolution order (like OpenClaw):
     /// 1. LOCALGPT_WORKSPACE env var (absolute path override)
-    /// 2. LOCALGPT_PROFILE env var (creates ~/.localgpt/workspace-{profile})
+    /// 2. LOCALGPT_PROFILE env var (creates ~/.ccoegpt/workspace-{profile})
     /// 3. memory.workspace from config file
-    /// 4. Default: ~/.localgpt/workspace
+    /// 4. Default: ~/.ccoegpt/workspace
     pub fn workspace_path(&self) -> PathBuf {
         // Check for direct workspace override
         if let Ok(workspace) = std::env::var("LOCALGPT_WORKSPACE") {
@@ -514,7 +514,7 @@ impl Config {
                     .map(|b| b.home_dir().to_path_buf())
                     .unwrap_or_else(|| PathBuf::from("~"));
                 return base
-                    .join(".localgpt")
+                    .join(".ccoegpt")
                     .join(format!("workspace-{}", trimmed));
             }
         }
@@ -536,7 +536,7 @@ fn expand_env(s: &str) -> String {
 }
 
 /// Default config template with helpful comments (used for first-time setup)
-const DEFAULT_CONFIG_TEMPLATE: &str = r#"# LocalGPT Configuration
+const DEFAULT_CONFIG_TEMPLATE: &str = r#"# CCOEGPT Configuration
 # Auto-created on first run. Edit as needed.
 
 [agent]
@@ -570,8 +570,8 @@ interval = "30m"
 # Workspace directory for memory files (MEMORY.md, HEARTBEAT.md, etc.)
 # Can also be set via environment variables:
 #   LOCALGPT_WORKSPACE=/path/to/workspace  - absolute path override
-#   LOCALGPT_PROFILE=work                  - uses ~/.localgpt/workspace-work
-workspace = "~/.localgpt/workspace"
+#   LOCALGPT_PROFILE=work                  - uses ~/.ccoegpt/workspace-work
+workspace = "~/.ccoegpt/workspace"
 
 # Session memory settings (for /new command)
 # session_max_messages = 15    # Max messages to save (0 = unlimited)

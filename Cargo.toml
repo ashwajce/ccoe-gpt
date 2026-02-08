@@ -1,12 +1,12 @@
 [package]
-name = "localgpt"
+name = "ccoegpt"
 version = "0.1.2"
 edition = "2021"
 description = "A local device focused AI assistant with persistent markdown memory, autonomous heartbeat tasks, and semantic search. Single binary, no runtime dependencies."
 license = "Apache-2.0"
-repository = "https://github.com/localgpt-app/localgpt"
-homepage = "https://localgpt.app"
-documentation = "https://github.com/localgpt-app/localgpt/blob/main/README.md"
+repository = "https://github.com/ashwajce/ccoe-gpt"
+homepage = "https://github.com/ashwajce/ccoe-gpt"
+documentation = "https://github.com/ashwajce/ccoe-gpt/blob/main/README.md"
 readme = "README.md"
 keywords = ["ai", "assistant", "llm", "memory", "local"]
 categories = ["command-line-utilities", "text-processing"]

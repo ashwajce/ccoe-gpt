@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Args;
 
-use localgpt::agent::{Agent, AgentConfig};
-use localgpt::concurrency::WorkspaceLock;
-use localgpt::config::Config;
-use localgpt::memory::MemoryManager;
+use ccoegpt::agent::{Agent, AgentConfig};
+use ccoegpt::concurrency::WorkspaceLock;
+use ccoegpt::config::Config;
+use ccoegpt::memory::MemoryManager;
 
 #[derive(Args)]
 pub struct AskArgs {

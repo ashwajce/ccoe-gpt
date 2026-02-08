@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use localgpt::config::Config;
-use localgpt::memory::MemoryManager;
+use ccoegpt::config::Config;
+use ccoegpt::memory::MemoryManager;
 
 #[derive(Args)]
 pub struct MemoryArgs {

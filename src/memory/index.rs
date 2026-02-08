@@ -418,7 +418,7 @@ impl MemoryIndex {
         &self.db_path
     }
 
-    /// Check if we need to migrate from old LocalGPT schema to OpenClaw schema
+    /// Check if we need to migrate from old CCOEGPT schema to OpenClaw schema
     fn needs_schema_migration(conn: &Connection) -> Result<bool> {
         // Check for old schema indicators:
         // 1. chunks table has 'file_path' column instead of 'path'
@@ -440,7 +440,7 @@ impl MemoryIndex {
         Ok(has_file_path || has_content)
     }
 
-    /// Migrate from old LocalGPT schema to OpenClaw-compatible schema
+    /// Migrate from old CCOEGPT schema to OpenClaw-compatible schema
     fn migrate_to_openclaw_schema(conn: &Connection) -> Result<()> {
         // Start transaction
         conn.execute("BEGIN TRANSACTION", [])?;

@@ -59,6 +59,11 @@ function setupEventListeners() {
     document.getElementById('sessions-toggle').onclick = toggleSessionsPanel;
     document.getElementById('sessions-close').onclick = toggleSessionsPanel;
     document.getElementById('session-back').onclick = showSessionsList;
+
+    // Model switcher
+    document.getElementById('model-select').onchange = async (e) => {
+        await switchModel(e.target.value);
+    };
 }
 
 function showEmptyState() {
@@ -451,6 +456,12 @@ function updateStatusPanel(status, heartbeat) {
     document.getElementById('status-model').textContent = status.model || '-';
     document.getElementById('status-sessions').textContent = status.active_sessions || '0';
 
+    // Update model selector to match current model
+    const modelSelect = document.getElementById('model-select');
+    if (status.model) {
+        modelSelect.value = status.model;
+    }
+
     // Update heartbeat status
     const statusDot = document.getElementById('status-dot');
     const heartbeatStatusEl = document.getElementById('heartbeat-status');
@@ -616,7 +627,7 @@ async function viewSession(sessionId) {
 
 function renderSessionMessage(msg) {
     const roleClass = msg.role === 'user' ? 'user' :
-                      msg.role === 'toolResult' ? 'tool' : 'assistant';
+        msg.role === 'toolResult' ? 'tool' : 'assistant';
 
     let html = `<div class="message ${roleClass}">`;
 
@@ -662,3 +673,45 @@ function showSessionsList() {
     listEl.style.display = 'block';
     viewerEl.classList.add('hidden');
 }
+
+// Model switcher function
+async function switchModel(model) {
+    if (!sessionId) {
+        appendSystemMessage('Please start a session first before switching models.');
+        // Reset dropdown to current model
+        await loadStatus();
+        return;
+    }
+
+    const modelSelect = document.getElementById('model-select');
+    const previousModel = modelSelect.value;
+
+    try {
+        const res = await fetch(`${API}/sessions/${sessionId}/model`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model })
+        });
+
+        if (!res.ok) {
+            const error = await res.text();
+            throw new Error(error);
+        }
+
+        const data = await res.json();
+        appendSystemMessage(`Switched to ${model}`);
+
+        // Ensure dropdown reflects the new model
+        modelSelect.value = model;
+
+        // Don't call loadStatus() here - it fetches the global default model
+        // and would overwrite our session-specific model selection
+    } catch (err) {
+        appendSystemMessage(`Failed to switch model: ${err.message}`);
+
+        // Reset dropdown to previous model on error
+        modelSelect.value = previousModel;
+        await loadStatus();
+    }
+}
+

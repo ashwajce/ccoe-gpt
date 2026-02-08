@@ -233,7 +233,7 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
             let anthropic_config = config.providers.anthropic.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "Anthropic provider not configured.\n\
-                    Set ANTHROPIC_API_KEY env var or add to ~/.localgpt/config.toml:\n\n\
+                    Set ANTHROPIC_API_KEY env var or add to ~/.ccoegpt/config.toml:\n\n\
                     [providers.anthropic]\n\
                     api_key = \"sk-ant-...\""
                 )
@@ -252,7 +252,7 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
             let openai_config = config.providers.openai.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "OpenAI provider not configured.\n\
-                    Set OPENAI_API_KEY env var or add to ~/.localgpt/config.toml:\n\n\
+                    Set OPENAI_API_KEY env var or add to ~/.ccoegpt/config.toml:\n\n\
                     [providers.openai]\n\
                     api_key = \"sk-...\""
                 )
@@ -277,7 +277,7 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
             let ollama_config = config.providers.ollama.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "Ollama provider not configured.\n\
-                    Add to ~/.localgpt/config.toml:\n\n\
+                    Add to ~/.ccoegpt/config.toml:\n\n\
                     [providers.ollama]\n\
                     endpoint = \"http://localhost:11434\""
                 )
@@ -1115,8 +1115,8 @@ pub struct ClaudeCliProvider {
     workspace: std::path::PathBuf,
     /// Session key for the session store (e.g., "main")
     session_key: String,
-    /// LocalGPT session ID (for session store tracking)
-    localgpt_session_id: String,
+    /// CCOEGPT session ID (for session store tracking)
+    ccoegpt_session_id: String,
     /// CLI session ID for multi-turn conversations (interior mutability for &self methods)
     cli_session_id: StdMutex<Option<String>>,
 }
@@ -1139,7 +1139,7 @@ impl ClaudeCliProvider {
             model: normalize_claude_model(model),
             workspace,
             session_key,
-            localgpt_session_id: uuid::Uuid::new_v4().to_string(),
+            ccoegpt_session_id: uuid::Uuid::new_v4().to_string(),
             cli_session_id: StdMutex::new(existing_session),
         })
     }
@@ -1421,7 +1421,7 @@ impl LLMProvider for ClaudeCliProvider {
             // Persist to session store for cross-restart continuity
             if let Err(e) = save_cli_session_to_store(
                 &self.session_key,
-                &self.localgpt_session_id,
+                &self.ccoegpt_session_id,
                 CLAUDE_CLI_PROVIDER,
                 new_cli_sid,
             ) {
@@ -1509,7 +1509,7 @@ impl LLMProvider for ClaudeCliProvider {
         // Clone session state for the stream closure
         let cli_session_id = self.cli_session_id.lock().ok().and_then(|g| g.clone());
         let session_key = self.session_key.clone();
-        let localgpt_session_id = self.localgpt_session_id.clone();
+        let ccoegpt_session_id = self.ccoegpt_session_id.clone();
         let cli_session_mutex = std::sync::Arc::new(StdMutex::new(cli_session_id));
 
         // Create the stream
@@ -1659,7 +1659,7 @@ impl LLMProvider for ClaudeCliProvider {
                                 // Persist to session store
                                 if let Err(e) = save_cli_session_to_store(
                                     &session_key,
-                                    &localgpt_session_id,
+                                    &ccoegpt_session_id,
                                     CLAUDE_CLI_PROVIDER,
                                     sid,
                                 ) {

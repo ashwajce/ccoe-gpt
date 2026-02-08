@@ -1,21 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LocalGPT</title>
+    <title>CCOEGPT</title>
     <link rel="stylesheet" href="/ui/style.css">
 </head>
+
 <body>
     <div id="app">
         <header>
-            <h1>LocalGPT</h1>
+            <h1>CCOEGPT</h1>
             <div class="header-controls">
                 <button id="sessions-toggle" title="Saved Sessions">Sessions</button>
                 <button id="logs-toggle" title="Daemon Logs">Logs</button>
                 <button id="status-toggle" class="icon-btn" title="Status">
                     <span class="status-dot" id="status-dot"></span>
                 </button>
+                <select id="model-select" title="Select model">
+                    <option value="ollama/llama3.2:1b">Llama 3.2 1B (Fast)</option>
+                    <option value="ollama/llama3.2">Llama 3.2 3B (Balanced)</option>
+                    <option value="ollama/mistral:7b-instruct">Mistral 7B (Quality)</option>
+                </select>
                 <select id="session-select" title="Select session"></select>
                 <button id="new-session" title="New session">New</button>
             </div>
@@ -96,4 +103,5 @@
     </div>
     <script src="/ui/app.js"></script>
 </body>
+
 </html>

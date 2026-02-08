@@ -8,7 +8,7 @@ pub mod memory;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "localgpt")]
+#[command(name = "ccoegpt")]
 #[command(author, version, about = "A lightweight, local-only AI assistant")]
 #[command(propagate_version = true)]
 pub struct Cli {

@@ -1,11 +1,11 @@
 
-# LocalGPT
+# CCOEGPT
 
 A local device focused AI assistant built in Rust — persistent memory, autonomous tasks, ~27MB binary. Inspired by and compatible with OpenClaw.
 
-`cargo install localgpt`
+`cargo install ccoegpt`
 
-## Why LocalGPT?
+## Why CCOEGPT?
 
 - **Single binary** — no Node.js, Docker, or Python required
 - **Local device focused** — runs entirely on your machine, your memory data stays yours
@@ -18,31 +18,31 @@ A local device focused AI assistant built in Rust — persistent memory, autonom
 ## Install
 
 ```bash
-cargo install localgpt
+cargo install ccoegpt
 ```
 
 ## Quick Start
 
 ```bash
 # Initialize configuration
-localgpt config init
+ccoegpt config init
 
 # Start interactive chat
-localgpt chat
+ccoegpt chat
 
 # Ask a single question
-localgpt ask "What is the meaning of life?"
+ccoegpt ask "What is the meaning of life?"
 
 # Run as a daemon with heartbeat, HTTP API and web ui
-localgpt daemon start
+ccoegpt daemon start
 ```
 
 ## How It Works
 
-LocalGPT uses plain markdown files as its memory:
+CCOEGPT uses plain markdown files as its memory:
 
 ```
-~/.localgpt/workspace/
+~/.ccoegpt/workspace/
 ├── MEMORY.md            # Long-term knowledge (auto-loaded each session)
 ├── HEARTBEAT.md         # Autonomous task queue
 ├── SOUL.md              # Personality and behavioral guidance
@@ -56,7 +56,7 @@ Files are indexed with SQLite FTS5 for fast keyword search, and sqlite-vec for s
 
 ## Configuration
 
-Stored at `~/.localgpt/config.toml`:
+Stored at `~/.ccoegpt/config.toml`:
 
 ```toml
 [agent]
@@ -71,31 +71,31 @@ interval = "30m"
 active_hours = { start = "09:00", end = "22:00" }
 
 [memory]
-workspace = "~/.localgpt/workspace"
+workspace = "~/.ccoegpt/workspace"
 ```
 
 ## CLI Commands
 
 ```bash
 # Chat
-localgpt chat                     # Interactive chat
-localgpt chat --session <id>      # Resume session
-localgpt ask "question"           # Single question
+ccoegpt chat                     # Interactive chat
+ccoegpt chat --session <id>      # Resume session
+ccoegpt ask "question"           # Single question
 
 # Daemon
-localgpt daemon start             # Start background daemon
-localgpt daemon stop              # Stop daemon
-localgpt daemon status            # Show status
-localgpt daemon heartbeat         # Run one heartbeat cycle
+ccoegpt daemon start             # Start background daemon
+ccoegpt daemon stop              # Stop daemon
+ccoegpt daemon status            # Show status
+ccoegpt daemon heartbeat         # Run one heartbeat cycle
 
 # Memory
-localgpt memory search "query"    # Search memory
-localgpt memory reindex           # Reindex files
-localgpt memory stats             # Show statistics
+ccoegpt memory search "query"    # Search memory
+ccoegpt memory reindex           # Reindex files
+ccoegpt memory stats             # Show statistics
 
 # Config
-localgpt config init              # Create default config
-localgpt config show              # Show current config
+ccoegpt config init              # Create default config
+ccoegpt config show              # Show current config
 ```
 
 ## HTTP API
@@ -112,7 +112,7 @@ When the daemon is running:
 
 ## Blog
 
-[Why I Built LocalGPT in 4 Nights](https://localgpt.app/blog/why-i-built-localgpt-in-4-nights) — the full story with commit-by-commit breakdown.
+[Why I Built CCOEGPT in 4 Nights](https://ccoegpt.app/blog/why-i-built-ccoegpt-in-4-nights) — the full story with commit-by-commit breakdown.
 
 ## Built With
 
@@ -120,13 +120,13 @@ Rust, Tokio, Axum, SQLite (FTS5 + sqlite-vec), fastembed, eframe
 
 ## Contributors
 
-<a href="https://github.com/localgpt-app/localgpt/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=localgpt-app/localgpt" />
+<a href="https://github.com/ccoegpt-app/ccoegpt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ccoegpt-app/ccoegpt" />
 </a>
 
 ## Stargazers
 
-[![Star History Chart](https://api.star-history.com/svg?repos=localgpt-app/localgpt&type=Date)](https://star-history.com/#localgpt-app/localgpt&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=ccoegpt-app/ccoegpt&type=Date)](https://star-history.com/#ccoegpt-app/ccoegpt&Date)
 
 ## License
 
