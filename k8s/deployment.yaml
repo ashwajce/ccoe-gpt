@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ccoegpt
+  namespace: default
+  labels:
+    app: ccoegpt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ccoegpt
+  template:
+    metadata:
+      labels:
+        app: ccoegpt
+    spec:
+      containers:
+      # CCOEGPT Daemon
+      - name: ccoegpt
+        image: your-registry/ccoegpt:latest  # Replace with your image
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 31327
+          name: http
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: CCOEGPT_CONFIG
+          value: "/config/config.toml"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /root/.ccoegpt
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /api/status
+            port: 31327
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: 31327
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      
+      # Ollama Sidecar
+      - name: ollama
+        image: ollama/ollama:latest
+        ports:
+        - containerPort: 11434
+          name: ollama
+          protocol: TCP
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        # Uncomment if you have GPU support
+        # resources:
+        #   limits:
+        #     nvidia.com/gpu: 1
+      
+      volumes:
+      - name: config
+        configMap:
+          name: ccoegpt-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: ccoegpt-data
+      - name: ollama-data
+        emptyDir: {}
+      
+      # Uncomment if using private registry
+      # imagePullSecrets:
+      # - name: registry-secret

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ccoegpt-config
+  namespace: default
+data:
+  config.toml: |
+    # CCOEGPT Configuration
+    default_model = "ollama/llama3.2"
+    context_window = 4096
+    reserve_tokens = 1000
+    
+    [llm]
+    provider = "ollama"
+    
+    [llm.ollama]
+    base_url = "http://localhost:11434"
+    
+    [memory]
+    embedding_model = "nomic-embed-text"
+    
+    [heartbeat]
+    enabled = true
+    interval_minutes = 60
